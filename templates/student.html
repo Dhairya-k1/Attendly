@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendly - Student Check-In</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; display: flex; flex-direction: column; align-items: center; padding: 20px; margin: 0; }
+        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 100%; }
+        video { width: 100%; border-radius: 8px; background-color: #000; margin-bottom: 15px; }
+        button { background-color: #4CAF50; color: white; border: none; padding: 15px 20px; font-size: 16px; border-radius: 8px; cursor: pointer; width: 100%; font-weight: bold; transition: 0.3s; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        #status, #audio-status { margin-top: 15px; font-weight: bold; }
+        #audio-status { color: #f44336; } /* Red until tone is heard */
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Class Check-In</h2>
+        <p>Ensure your face is clearly visible.</p>
+        
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas" style="display:none;"></canvas>
+        
+        <!-- Button starts disabled until the audio token is heard -->
+        <button id="snap-btn" disabled>Waiting for Audio Token...</button>
+        
+        <p id="audio-status">🎙️ Listening for Classroom Token...</p>
+        <p id="status"></p>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const snapBtn = document.getElementById('snap-btn');
+        const statusText = document.getElementById('status');
+        const audioStatus = document.getElementById('audio-status');
+
+        let audioTokenDetected = false;
+        const TARGET_FREQUENCY = 19000; // 19kHz
+
+        // --- 1. START CAMERA ---
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
+            .then(stream => { video.srcObject = stream; })
+            .catch(err => { statusText.innerText = "Error: Cannot access camera."; statusText.style.color = "red"; });
+
+        // --- 2. START ULTRASONIC LISTENER ---
+        navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(stream => {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const analyser = audioCtx.createAnalyser();
+                const microphone = audioCtx.createMediaStreamSource(stream);
+                
+                microphone.connect(analyser);
+                analyser.fftSize = 2048; 
+                
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+
+                // Calculate which "bin" in the FFT array corresponds to 19kHz
+                const sampleRate = audioCtx.sampleRate;
+                const binIndex = Math.round((TARGET_FREQUENCY * analyser.fftSize) / sampleRate);
+
+                function checkAudio() {
+                    if (audioTokenDetected) return; // Stop checking if we already found it
+
+                    analyser.getByteFrequencyData(dataArray);
+                    
+                    // Check the volume/amplitude at the 19kHz frequency bin
+                    const amplitude = dataArray[binIndex];
+
+                    // If the volume at 19kHz crosses a threshold (e.g., 100 out of 255)
+                    if (amplitude > 100) {
+                        audioTokenDetected = true;
+                        audioStatus.innerText = "✅ Audio Token Verified! You are in the room.";
+                        audioStatus.style.color = "green";
+                        
+                        snapBtn.innerText = "Take Selfie & Check In";
+                        snapBtn.disabled = false; // Unlock the Check-In button
+                    } else {
+                        // Keep checking every frame
+                        requestAnimationFrame(checkAudio);
+                    }
+                }
+                
+                checkAudio(); // Start the listening loop
+            })
+            .catch(err => {
+                audioStatus.innerText = "Error: Microphone access denied.";
+            });
+
+        // --- 3. HANDLE PICTURE UPLOAD (Same as before) ---
+        snapBtn.addEventListener('click', async () => {
+            statusText.innerText = "Processing...";
+            statusText.style.color = "blue";
+            snapBtn.disabled = true;
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            canvas.toBlob(async (blob) => {
+                const formData = new FormData();
+                formData.append('image', blob, 'selfie.jpg');
+                // We send the hardcoded token because we verified its physical presence via sound
+                formData.append('audio_token', 'CS101-May03'); 
+
+                try {
+                    const response = await fetch('/mark_attendance', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const result = await response.json();
+
+                    if (result.status === "success") {
+                        statusText.innerText = `✅ Welcome, ${result.name}! ${result.message}`;
+                        statusText.style.color = "green";
+                    } else {
+                        statusText.innerText = `❌ ${result.message}`;
+                        statusText.style.color = "red";
+                        snapBtn.disabled = false; // Let them try again if face failed
+                    }
+                } catch (error) {
+                    statusText.innerText = "❌ Network error. Is the server running?";
+                    statusText.style.color = "red";
+                    snapBtn.disabled = false;
+                }
+            }, 'image/jpeg');
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+# ==========================================
+# Attendly Project - .gitignore
+# ==========================================
+
+# 1. Virtual Environments (NEVER upload these)
+venv/
+env/
+.venv/
+
+# 2. Database & Local Memory
+# Do not upload the live database containing attendance logs
+attendance_system.db
+*.sqlite3
+*.db
+
+# 3. Datasets & Biometric Models
+# Do not upload raw face images or generated encodings (Privacy & Bloat)
+dataset/
+encodings.pickle
+
+# 4. Python Cache & Compiled Files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 5. Environment Variables & Secrets
+# If you ever use a .env file for API keys (like an Ngrok auth token), keep it secret
+.env
+
+# 6. IDE & OS Specific Files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

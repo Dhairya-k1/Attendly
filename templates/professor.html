@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendly - Professor Dashboard</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e2f; color: white; margin: 0; padding: 20px; display: flex; justify-content: center; }
+        .container { max-width: 800px; width: 100%; background: #2a2a40; padding: 30px; border-radius: 12px; box-shadow: 0 10px 20px rgba(0,0,0,0.3); }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #3f3f5a; padding-bottom: 20px; margin-bottom: 20px; }
+        .btn { padding: 12px 24px; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; transition: 0.3s; }
+        .btn-start { background-color: #4CAF50; color: white; }
+        .btn-stop { background-color: #f44336; color: white; display: none; }
+        .status-badge { background: #555; padding: 5px 15px; border-radius: 20px; font-size: 14px; }
+        .status-active { background: #4CAF50; animation: pulse 1.5s infinite; }
+        .log-box { background: #1e1e2f; border-radius: 8px; height: 300px; overflow-y: auto; padding: 10px; border: 1px solid #3f3f5a; }
+        .log-item { background: #3f3f5a; margin-bottom: 10px; padding: 12px; border-radius: 6px; display: flex; justify-content: space-between; }
+        
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(76, 175, 80, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <div>
+            <h1 style="margin: 0;">Classroom Dashboard</h1>
+            <p style="color: #aaa; margin-top: 5px;">Session ID: <strong id="session-id">CS101-May03</strong></p>
+        </div>
+        <div style="text-align: right;">
+            <span id="audio-status" class="status-badge">Audio Token: OFF</span><br><br>
+            <button id="start-btn" class="btn btn-start">Start Class & Emit Token</button>
+            <button id="stop-btn" class="btn btn-stop">Stop Class</button>
+        </div>
+    </div>
+
+    <h3>Live Attendance (<span id="count">0</span>)</h3>
+    <div class="log-box" id="log-box">
+        <p style="color: #888; text-align: center; margin-top: 50px;">Waiting for class to start...</p>
+    </div>
+</div>
+
+<script>
+    let audioCtx;
+    let oscillator;
+    let pollingInterval;
+
+    const startBtn = document.getElementById('start-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    const audioStatus = document.getElementById('audio-status');
+    const logBox = document.getElementById('log-box');
+    const countDisplay = document.getElementById('count');
+
+    // --- 1. ULTRASONIC AUDIO EMITTER LOGIC ---
+    function startUltrasonicToken() {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        oscillator = audioCtx.createOscillator();
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(19000, audioCtx.currentTime); 
+        oscillator.connect(audioCtx.destination);
+        oscillator.start();
+    }
+
+    function stopUltrasonicToken() {
+        if (oscillator) oscillator.stop();
+        if (audioCtx) audioCtx.close();
+    }
+
+    // --- 2. SERVER POLLING LOGIC ---
+    async function fetchAttendance() {
+        try {
+            const response = await fetch('/get_attendance');
+            const data = await response.json();
+            
+            logBox.innerHTML = '';
+            countDisplay.innerText = data.length;
+
+            if (data.length === 0) {
+                logBox.innerHTML = '<p style="color: #888; text-align: center; margin-top: 50px;">No students checked in yet.</p>';
+                return;
+            }
+
+            data.forEach(student => {
+                const item = document.createElement('div');
+                item.className = 'log-item';
+                item.innerHTML = `<span><strong>${student.name}</strong></span> <span>${student.time}</span>`;
+                logBox.appendChild(item);
+            });
+        } catch (error) {
+            console.error("Error fetching data:", error);
+        }
+    }
+
+    // --- 3. UI CONTROLS ---
+    startBtn.addEventListener('click', () => {
+        startUltrasonicToken();
+        fetchAttendance(); 
+        pollingInterval = setInterval(fetchAttendance, 3000);
+        
+        startBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+        audioStatus.innerText = 'Audio Token: EMITTING (19kHz)';
+        audioStatus.classList.add('status-active');
+    });
+
+    stopBtn.addEventListener('click', () => {
+        stopUltrasonicToken();
+        clearInterval(pollingInterval);
+        
+        stopBtn.style.display = 'none';
+        startBtn.style.display = 'inline-block';
+        audioStatus.innerText = 'Audio Token: OFF';
+        audioStatus.classList.remove('status-active');
+    });
+</script>
+
+</body>
+</html>
