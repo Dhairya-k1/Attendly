@@ -9,6 +9,7 @@ env/
 
 # 2. Database & Local Memory
 # Do not upload the live database containing attendance logs
+Attendance_Report_2026-03-14_15-00-28.csv
 attendance_system.db
 *.sqlite3
 *.db
