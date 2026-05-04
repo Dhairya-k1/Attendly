@@ -1,5 +1,5 @@
 import os
-
+from fastapi.staticfiles import StaticFiles
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -16,6 +16,8 @@ DB_NAME = "attendance_system.db"
 
 # Initialize FastAPI App
 app = FastAPI(title="Attendly Platform")
+
+app.mount("/models", StaticFiles(directory="models"), name="models")
 
 # --- WEB ROUTING (THE SINGLE PLATFORM LOGIC) ---
 

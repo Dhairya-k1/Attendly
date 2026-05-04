@@ -3,97 +3,125 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Attendly - Student Check-In</title>
+    <title>Attendly - Secure Check-In</title>
+    <!-- Load face-api.js for client-side liveness detection -->
+    <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; display: flex; flex-direction: column; align-items: center; padding: 20px; margin: 0; }
         .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 100%; }
-        video { width: 100%; border-radius: 8px; background-color: #000; margin-bottom: 15px; }
-        button { background-color: #4CAF50; color: white; border: none; padding: 15px 20px; font-size: 16px; border-radius: 8px; cursor: pointer; width: 100%; font-weight: bold; transition: 0.3s; }
-        button:disabled { background-color: #cccccc; cursor: not-allowed; }
-        #status, #audio-status { margin-top: 15px; font-weight: bold; }
-        #audio-status { color: #f44336; } /* Red until tone is heard */
+        video { width: 100%; border-radius: 8px; background-color: #000; margin-bottom: 15px; transform: scaleX(-1); } /* Mirrored for a natural selfie feel */
+        button { background-color: #4CAF50; color: white; border: none; padding: 15px 20px; font-size: 16px; border-radius: 8px; width: 100%; font-weight: bold; transition: 0.3s; }
+        button:disabled { background-color: #cccccc; color: #666; cursor: not-allowed; }
+        .status-text { margin-top: 10px; font-weight: bold; font-size: 14px;}
+        .pending { color: #f44336; }
+        .passed { color: #4CAF50; }
     </style>
 </head>
 <body>
 
     <div class="card">
-        <h2>Class Check-In</h2>
-        <p>Ensure your face is clearly visible.</p>
+        <h2>Secure Check-In</h2>
+        <p>1. Be quiet so the mic can hear the room.<br>2. Smile at the camera to prove you are real.</p>
         
-        <video id="video" autoplay playsinline></video>
+        <video id="video" autoplay playsinline muted></video>
         <canvas id="canvas" style="display:none;"></canvas>
         
-        <!-- Button starts disabled until the audio token is heard -->
-        <button id="snap-btn" disabled>Waiting for Audio Token...</button>
+        <p id="audio-status" class="status-text pending">🎙️ Waiting for Classroom Audio Token...</p>
+        <p id="liveness-status" class="status-text pending">😐 Waiting for Liveness (Please Smile)...</p>
         
-        <p id="audio-status">🎙️ Listening for Classroom Token...</p>
-        <p id="status"></p>
+        <button id="snap-btn" disabled>Locks Active. Waiting...</button>
+        <p id="server-status" class="status-text"></p>
     </div>
 
     <script>
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
         const snapBtn = document.getElementById('snap-btn');
-        const statusText = document.getElementById('status');
         const audioStatus = document.getElementById('audio-status');
+        const livenessStatus = document.getElementById('liveness-status');
+        const serverStatus = document.getElementById('server-status');
 
-        let audioTokenDetected = false;
-        const TARGET_FREQUENCY = 19000; // 19kHz
+        let isAudioVerified = false;
+        let isLivenessVerified = false;
+        const TARGET_FREQUENCY = 19000;
 
-        // --- 1. START CAMERA ---
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
-            .then(stream => { video.srcObject = stream; })
-            .catch(err => { statusText.innerText = "Error: Cannot access camera."; statusText.style.color = "red"; });
+        // --- INIT ALL SYSTEMS ---
+        Promise.all([
+            // Load the ML models from our FastAPI server
+            faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
+            faceapi.nets.faceExpressionNet.loadFromUri('/models')
+        ]).then(startCamera);
 
-        // --- 2. START ULTRASONIC LISTENER ---
-        navigator.mediaDevices.getUserMedia({ audio: true })
-            .then(stream => {
-                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                const analyser = audioCtx.createAnalyser();
-                const microphone = audioCtx.createMediaStreamSource(stream);
+        function startCamera() {
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true })
+                .then(stream => { 
+                    video.srcObject = stream; 
+                    startAudioListener(stream);
+                })
+                .catch(err => alert("Camera/Mic access is required for attendance."));
+        }
+
+        // --- SECURITY LOCK 1: ULTRASONIC LISTENER ---
+        function startAudioListener(stream) {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const analyser = audioCtx.createAnalyser();
+            const microphone = audioCtx.createMediaStreamSource(stream);
+            microphone.connect(analyser);
+            analyser.fftSize = 2048; 
+            
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            const binIndex = Math.round((TARGET_FREQUENCY * analyser.fftSize) / audioCtx.sampleRate);
+
+            function checkAudio() {
+                if (isAudioVerified) return;
+                analyser.getByteFrequencyData(dataArray);
+                if (dataArray[binIndex] > 100) { // Threshold for 19kHz volume
+                    isAudioVerified = true;
+                    audioStatus.innerText = "✅ Audio Token Verified!";
+                    audioStatus.className = "status-text passed";
+                    checkUnlockStatus();
+                } else {
+                    requestAnimationFrame(checkAudio);
+                }
+            }
+            checkAudio();
+        }
+
+        // --- SECURITY LOCK 2: LIVENESS (SMILE) DETECTOR ---
+        video.addEventListener('play', () => {
+            const livenessCheck = setInterval(async () => {
+                if (isLivenessVerified) {
+                    clearInterval(livenessCheck);
+                    return;
+                }
+
+                // Scan the video feed for faces and expressions
+                const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions()).withFaceExpressions();
                 
-                microphone.connect(analyser);
-                analyser.fftSize = 2048; 
-                
-                const bufferLength = analyser.frequencyBinCount;
-                const dataArray = new Uint8Array(bufferLength);
-
-                // Calculate which "bin" in the FFT array corresponds to 19kHz
-                const sampleRate = audioCtx.sampleRate;
-                const binIndex = Math.round((TARGET_FREQUENCY * analyser.fftSize) / sampleRate);
-
-                function checkAudio() {
-                    if (audioTokenDetected) return; // Stop checking if we already found it
-
-                    analyser.getByteFrequencyData(dataArray);
-                    
-                    // Check the volume/amplitude at the 19kHz frequency bin
-                    const amplitude = dataArray[binIndex];
-
-                    // If the volume at 19kHz crosses a threshold (e.g., 100 out of 255)
-                    if (amplitude > 100) {
-                        audioTokenDetected = true;
-                        audioStatus.innerText = "✅ Audio Token Verified! You are in the room.";
-                        audioStatus.style.color = "green";
-                        
-                        snapBtn.innerText = "Take Selfie & Check In";
-                        snapBtn.disabled = false; // Unlock the Check-In button
-                    } else {
-                        // Keep checking every frame
-                        requestAnimationFrame(checkAudio);
+                if (detections.length > 0) {
+                    // If the 'happy' expression confidence is over 80%
+                    if (detections[0].expressions.happy > 0.8) {
+                        isLivenessVerified = true;
+                        livenessStatus.innerText = "✅ Liveness Verified! (Smile Detected)";
+                        livenessStatus.className = "status-text passed";
+                        checkUnlockStatus();
                     }
                 }
-                
-                checkAudio(); // Start the listening loop
-            })
-            .catch(err => {
-                audioStatus.innerText = "Error: Microphone access denied.";
-            });
+            }, 500); // Check every half second
+        });
 
-        // --- 3. HANDLE PICTURE UPLOAD (Same as before) ---
+        // --- UNLOCK & CHECK-IN LOGIC ---
+        function checkUnlockStatus() {
+            if (isAudioVerified && isLivenessVerified) {
+                snapBtn.innerText = "Systems Go. Click to Log Attendance";
+                snapBtn.disabled = false;
+                snapBtn.style.backgroundColor = "#2196F3"; // Turn blue to indicate ready
+            }
+        }
+
         snapBtn.addEventListener('click', async () => {
-            statusText.innerText = "Processing...";
-            statusText.style.color = "blue";
+            serverStatus.innerText = "Uploading to server...";
+            serverStatus.style.color = "blue";
             snapBtn.disabled = true;
 
             canvas.width = video.videoWidth;
@@ -103,29 +131,22 @@
             canvas.toBlob(async (blob) => {
                 const formData = new FormData();
                 formData.append('image', blob, 'selfie.jpg');
-                // We send the hardcoded token because we verified its physical presence via sound
-                formData.append('audio_token', 'CS101-May03'); 
+                formData.append('audio_token', 'CS101-May03'); // The token physically verified by audio
 
                 try {
-                    const response = await fetch('/mark_attendance', {
-                        method: 'POST',
-                        body: formData
-                    });
-
+                    const response = await fetch('/mark_attendance', { method: 'POST', body: formData });
                     const result = await response.json();
 
                     if (result.status === "success") {
-                        statusText.innerText = `✅ Welcome, ${result.name}! ${result.message}`;
-                        statusText.style.color = "green";
+                        serverStatus.innerText = `✅ Success: ${result.name} - ${result.message}`;
+                        serverStatus.className = "status-text passed";
                     } else {
-                        statusText.innerText = `❌ ${result.message}`;
-                        statusText.style.color = "red";
-                        snapBtn.disabled = false; // Let them try again if face failed
+                        serverStatus.innerText = `❌ Failed: ${result.message}`;
+                        serverStatus.className = "status-text pending";
+                        snapBtn.disabled = false; 
                     }
                 } catch (error) {
-                    statusText.innerText = "❌ Network error. Is the server running?";
-                    statusText.style.color = "red";
-                    snapBtn.disabled = false;
+                    serverStatus.innerText = "❌ Network Error.";
                 }
             }, 'image/jpeg');
         });
