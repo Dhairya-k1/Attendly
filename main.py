@@ -40,7 +40,7 @@ def professor_dashboard():
     """Serves the Professor's Audio Emitter Dashboard"""
     return serve_html("professor.html")
 
-@app.get("/app")
+@app.get("/app", response_class=HTMLResponse)
 def student_app():
     """Serves the Student's BYOD Web App"""
     return serve_html("student.html")
@@ -91,8 +91,8 @@ def log_attendance_to_db(user_id, name):
     return "Already logged today."
 
 
-@app.get("/")
-def read_root():
+@app.get("/health")
+def health_check():
     """Health check endpoint to ensure the server is running."""
     return {"status": "online", "message": "Attendly API is running."}
 
@@ -190,11 +190,4 @@ def get_attendance():
     # Format the data into a list of dictionaries for the frontend
     return [{"name": row[0], "time": row[1]} for row in records]
 
-@app.get("/app", response_class=HTMLResponse)
-def get_student_app():
-    """Serves the student HTML app to mobile devices."""
-    try:
-        with open("student_app.html", "r") as f:
-            return f.read()
-    except FileNotFoundError:
-        return "student_app.html not found on server."
+# Note: student web app is served via the `/app` route above using `serve_html`.

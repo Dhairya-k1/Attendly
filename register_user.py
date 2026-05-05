@@ -6,11 +6,11 @@ import time
 DATABASE_NAME = "attendance_system.db"
 DATASET_DIR = "dataset"
 
-def register_user_in_db(name, role):
+def register_user_in_db(name, roll):
     conn = sqlite3.connect(DATABASE_NAME)
     cursor = conn.cursor()
     
-    cursor.execute("INSERT INTO Users (name, role) VALUES (?, ?)", (name, role))
+    cursor.execute("INSERT INTO Users (name, roll) VALUES (?, ?)", (name, roll))
     user_id = cursor.lastrowid
     
     conn.commit()
@@ -70,10 +70,10 @@ def capture_face_images(user_id, user_name, num_images=5):
 if __name__ == "__main__":
     print("=== Smart Attendance: User Registration ===")
     name_input = input("Enter user's full name: ")
-    role_input = input("Enter user's role (e.g., Student, Employee): ")
+    roll_input = input("Enter user's role (e.g., Student, Employee): ")
     
     print("\nSaving to database...")
-    new_user_id = register_user_in_db(name_input, role_input)
+    new_user_id = register_user_in_db(name_input, roll_input)
     
     print(f"User saved with ID: {new_user_id}")
     print("When the camera opens, make sure your face is in the green box.")
